@@ -1,0 +1,5 @@
+services:
+  yt-music-tui:
+    build: .
+    stdin_open: true
+    tty: true
