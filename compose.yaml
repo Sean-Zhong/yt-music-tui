@@ -3,3 +3,7 @@ services:
     build: .
     stdin_open: true
     tty: true
+    devices:
+      - /dev/snd:/dev/snd
+    environment:
+      - ALSA_CARD=0
