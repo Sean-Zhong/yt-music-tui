@@ -10,13 +10,13 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        
+
         # Package up the local python environment
         pythonEnv = pkgs.python3.withPackages (ps: [
           ps.textual
           ps.ytmusicapi
           # Note: if python-mpv isn't in nixpkgs, nix will build it via pip
-          (ps.toPythonModule pkgs.python3Packages.mpv) 
+          (ps.toPythonModule pkgs.python3Packages.mpv)
         ]);
       in
       {
