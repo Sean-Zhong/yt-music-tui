@@ -3,7 +3,6 @@ from io import BytesIO
 import httpx
 from PIL import Image as PILImage
 
-# Swapped out the pixel engine for the terminal-native high-density text grid renderer
 from textual_image.widget import HalfcellImage
 
 # Keep the C locale locked down before any library initializations happen
@@ -17,7 +16,6 @@ from textual.binding import Binding
 
 from ytmusicapi import YTMusic
 from player_manager import PlaybackManager
-from pathlib import Path
 
 
 class PlaybackBar(Label):
@@ -97,26 +95,20 @@ class YTMusicTUI(App):
         Binding("right", "seek_forward", "Seek +10s", show=True),
         Binding("up", "volume_up", "Vol +5%", show=True),
         Binding("down", "volume_down", "Vol -5%", show=True),
-        Binding("h", "nav_left", "Sidebar [H]", show=True),
-        Binding("j", "nav_down", "Down [J]", show=True),
-        Binding("k", "nav_up", "Up [K]", show=True),
-        Binding("l", "nav_right", "Tracks [L]", show=True),
-        Binding("a", "toggle_large_art", "Album Art [A]", show=True),
+        Binding("h", "nav_left", "Sidebar", show=True),
+        Binding("j", "nav_down", "Down", show=True),
+        Binding("k", "nav_up", "Up", show=True),
+        Binding("l", "nav_right", "Tracks", show=True),
+        Binding("a", "toggle_large_art", "Album Art", show=True),
     ]
 
     CSS_PATH = "style.tcss"
 
     def on_mount(self) -> None:
         """Called when the app starts up and components are mounted."""
-        # Target ~/.config/ytmusic-tui/browser.json safely across environments
-        config_path = Path.home() / ".config" / "ytmusic-tui" / "browser.json"
-        
-        # Fallback to local file if the global config directory doesn't exist
-        if not config_path.exists():
-            config_path = "browser.json"
-            
-        self.ytmusic = YTMusic(str(config_path))
+        self.ytmusic = YTMusic("browser.json")
         self.player = PlaybackManager(ui_callback=self.handle_player_event)
+        self.current_row_key = None  # Track the actively playing track coordinate
         
         table = self.query_one("#tracks-table", VolumeDataTable)
         table.add_columns("Title", "Artist", "Album")
@@ -305,6 +297,7 @@ class YTMusicTUI(App):
         
         self.row_to_video_id = {}
         self.row_to_thumbnail = {}
+        self.current_row_key = None
         self.query_one("#content-title", Label).update(f"Tracks ({len(tracks)} loaded)")
 
         for track in tracks:
@@ -334,6 +327,8 @@ class YTMusicTUI(App):
         row_data = table.get_row(event.row_key)
         title, artist, album = row_data
             
+        self.current_row_key = event.row_key
+            
         self.query_one("#track-info", Label).update(f"⏳ Fetching stream: {title}...")
         self.query_one("#player-status", Label).update("Status: Loading...")
         
@@ -346,10 +341,8 @@ class YTMusicTUI(App):
         self.query_one("#track-info", Label).update(f"▶ Now Playing: {title} by {artist}")
         self.query_one("#player-status", Label).update(f"Status: Playing | Volume: {self.player.volume}%")
         
-        # FIX: Fire off the MPV audio layer FIRST. It now has 100% network priority.
         self.player.play(track_url, title, artist)
         
-        # The artwork download now runs non-blocking in the background, updating whenever it arrives!
         if thumbnail_url:
             try:
                 async with httpx.AsyncClient() as client:
@@ -365,6 +358,45 @@ class YTMusicTUI(App):
         """Thread-safe callback triggered by background MPV events."""
         if event_name == "track_finished":
             self.call_from_thread(self.action_next_track)
+
+    # ────────────── PLAYLIST AUTOMATION ENGINE ──────────────
+
+    def action_next_track(self) -> None:
+        """FIX: Scans the playlist indices and advances automatically to the next row."""
+        if self.current_row_key is None:
+            return
+
+        table = self.query_one("#tracks-table", VolumeDataTable)
+        row_keys = list(table.rows.keys())
+        
+        try:
+            current_idx = row_keys.index(self.current_row_key)
+            next_idx = current_idx + 1
+            
+            if next_idx < len(row_keys):
+                next_key = row_keys[next_idx]
+                
+                table.move_cursor(row=next_idx)
+                
+                video_id = self.row_to_video_id.get(next_key)
+                thumbnail_url = self.row_to_thumbnail.get(next_key)
+                
+                if video_id:
+                    row_data = table.get_row(next_key)
+                    title, artist, album = row_data
+                    
+                    self.current_row_key = next_key
+                    
+                    self.query_one("#track-info", Label).update(f"⏳ Fetching stream: {title}...")
+                    self.query_one("#player-status", Label).update("Status: Loading...")
+                    
+                    self.run_worker(self.play_track_worker(video_id, title, artist, thumbnail_url))
+            else:
+                self.query_one("#track-info", Label).update("⏹ Playlist complete.")
+                self.query_one("#player-status", Label).update("Status: Finished")
+                self.current_row_key = None
+        except (ValueError, IndexError):
+            pass
 
     def action_toggle_large_art(self) -> None:
         """Toggles the dynamic large layout view state class on the application root."""
@@ -404,14 +436,11 @@ class YTMusicTUI(App):
             state = "Paused" if is_paused else "Playing"
             status_label.update(f"Status: {state} | Volume: {self.player.volume}%")
 
-    def action_next_track(self) -> None:
-        """Placeholder for advancing the playlist queue."""
-        pass
-
     def on_unmount(self) -> None:
         """Safely cleans up the MPV core when closing down."""
         if hasattr(self, "player") and self.player is not None:
             self.player.close()
+
 
 if __name__ == "__main__":
     app = YTMusicTUI()
