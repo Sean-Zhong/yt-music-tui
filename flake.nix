@@ -11,7 +11,6 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        # Package up the local python environment with all required modules
         pythonEnv = pkgs.python3.withPackages (ps: [
           ps.textual
           ps.ytmusicapi
@@ -27,20 +26,19 @@
           version = "1.0.0";
           src = ./.;
 
-          # Runtime system dependencies that MUST be present for the binary to work
-          buildInputs = [ pythonEnv pkgs.mpv pkgs.makeWrapper ];
+          buildInputs = [ pythonEnv pkgs.mpv pkgs.yt-dlp pkgs.makeWrapper ];
 
           installPhase = ''
             mkdir -p $out/bin
             cp main.py $out/bin/ytmusic-tui-main
             cp player_manager.py $out/bin/
-            cp style.tcss $out/bin/
+            cp style.tcss $out/bin/  
             cp browser.json $out/bin/ || true
 
-            # Wrap the executable so it can always find the correct python and system libmpv
             makeWrapper ${pythonEnv}/bin/python3 $out/bin/ytmusic-tui \
               --add-flags "$out/bin/ytmusic-tui-main" \
-              --prefix LD_LIBRARY_PATH : "${pkgs.mpv}/lib"
+              --prefix LD_LIBRARY_PATH : "${pkgs.mpv}/lib" \
+              --prefix PATH : "${pkgs.yt-dlp}/bin"
           '';
         };
       }
