@@ -1,4 +1,11 @@
 import locale
+from io import BytesIO
+import httpx
+from PIL import Image as PILImage
+
+# Swapped out the pixel engine for the terminal-native high-density text grid renderer
+from textual_image.widget import HalfcellImage
+
 # Keep the C locale locked down before any library initializations happen
 locale.setlocale(locale.LC_NUMERIC, "C")
 
@@ -10,6 +17,7 @@ from textual.binding import Binding
 
 from ytmusicapi import YTMusic
 from player_manager import PlaybackManager
+from pathlib import Path
 
 
 class PlaybackBar(Label):
@@ -42,7 +50,7 @@ class VolumeBar(Label):
     
     def on_click(self, event: events.Click) -> None:
         """Fires automatically when a user clicks anywhere inside the vertical volume bar."""
-        if not hasattr(self.app, "player") or self.app.player.player is None:
+        if not hasattr(self.app, "player") or self.app.player is None:
             return
             
         height = self.size.height
@@ -93,71 +101,21 @@ class YTMusicTUI(App):
         Binding("j", "nav_down", "Down [J]", show=True),
         Binding("k", "nav_up", "Up [K]", show=True),
         Binding("l", "nav_right", "Tracks [L]", show=True),
+        Binding("a", "toggle_large_art", "Album Art [A]", show=True),
     ]
 
-    CSS = """
-    Screen {
-        background: #121212;
-    }
-    #app-body {
-        height: 1fr;
-    }
-    #sidebar {
-        width: 35;
-        background: #1e1e1e;
-        border-right: solid #333333;
-    }
-    .sidebar-title {
-        padding: 1 2;
-        background: #262626;
-        color: #ff0055;
-        text-style: bold;
-    }
-    #main-content {
-        width: 1fr;
-        padding: 1 2;
-    }
-    #player-bar {
-        height: 10;
-        background: #1a1a1a;
-        border-top: solid #ff0055;
-        padding: 1 2;
-        layout: horizontal;
-    }
-    #player-controls-right {
-        width: 1fr;
-        height: 1fr;
-        layout: vertical;
-    }
-    #player-controls-text {
-        height: 1fr;
-    }
-    #track-info {
-        color: #ffffff;
-        text-style: bold;
-    }
-    #player-status {
-        color: #888888;
-    }
-    #shortcuts-legend {
-        color: #555555;
-        text-style: italic;
-    }
-    PlaybackBar {
-        color: #ff0055;
-        width: 1fr;
-        height: 1;
-    }
-    VolumeBar {
-        margin-right: 3;
-        width: 2;
-        height: 1fr;
-    }
-    """
+    CSS_PATH = "style.tcss"
 
     def on_mount(self) -> None:
         """Called when the app starts up and components are mounted."""
-        self.ytmusic = YTMusic("browser.json")
+        # Target ~/.config/ytmusic-tui/browser.json safely across environments
+        config_path = Path.home() / ".config" / "ytmusic-tui" / "browser.json"
+        
+        # Fallback to local file if the global config directory doesn't exist
+        if not config_path.exists():
+            config_path = "browser.json"
+            
+        self.ytmusic = YTMusic(str(config_path))
         self.player = PlaybackManager(ui_callback=self.handle_player_event)
         
         table = self.query_one("#tracks-table", VolumeDataTable)
@@ -166,6 +124,8 @@ class YTMusicTUI(App):
         
         self.run_worker(self.fetch_user_playlists())
         self.set_interval(0.5, self.update_progress_bar)
+        
+        self.update_progress_bar()
 
         self.query_one("#menu-list", VolumeListView).focus()
 
@@ -180,10 +140,14 @@ class YTMusicTUI(App):
             
             with Container(id="main-content"):
                 yield Label("Tracks", id="content-title", classes="sidebar-title")
-                yield VolumeDataTable(id="tracks-table")
+                with Horizontal(id="workspace-split"):
+                    with Vertical(id="table-container"):
+                        yield VolumeDataTable(id="tracks-table")
+                    yield HalfcellImage(id="large-album-art")
         
         with Horizontal(id="player-bar"):
             yield VolumeBar("", id="volume-bar-display")
+            yield HalfcellImage(id="album-art")
             
             with Vertical(id="player-controls-right"):
                 with Vertical(id="player-controls-text"):
@@ -211,7 +175,8 @@ class YTMusicTUI(App):
         if isinstance(focused, VolumeListView):
             focused.action_cursor_down()
         elif isinstance(focused, VolumeDataTable):
-            focused.action_cursor_down()
+            if focused.row_count > 0 and focused.cursor_coordinate.row < focused.row_count - 1:
+                focused.action_cursor_down()
 
     def action_nav_up(self) -> None:
         """Scrolls up inside whichever list or table component is currently active."""
@@ -219,21 +184,31 @@ class YTMusicTUI(App):
         if isinstance(focused, VolumeListView):
             focused.action_cursor_up()
         elif isinstance(focused, VolumeDataTable):
-            focused.action_cursor_up()
+            if focused.cursor_coordinate.row > 0:
+                focused.action_cursor_up()
 
     # ────────────── TIMELINE & VOLUME UPDATE CLOCK ──────────────
 
     def update_progress_bar(self) -> None:
         """Polls the MPV background context and updates timeline & volume assets."""
-        if not hasattr(self, "player") or self.player.player is None:
-            return
+        position = 0
+        duration = 0
+        current_volume = 100
+        state = "Stopped"
+        timestamp_str = "[00:00 / 00:00]"
 
-        progress = self.player.get_progress()
-        position = progress["position"]
-        duration = progress["duration"]
-        current_volume = self.player.volume
+        has_player = hasattr(self, "player") and self.player is not None
+        if has_player:
+            current_volume = self.player.volume
+            if self.player.player is not None:
+                try:
+                    progress = self.player.get_progress()
+                    position = progress["position"]
+                    duration = progress["duration"]
+                    state = "Paused" if self.player.is_paused else "Playing"
+                except Exception:
+                    pass
 
-        # 1. Timeline Horizontal String Formatting
         timeline_widget = self.query_one("#progress-bar-display", PlaybackBar)
         t_width = timeline_widget.size.width if timeline_widget.size.width > 0 else 60
 
@@ -252,32 +227,27 @@ class YTMusicTUI(App):
             filled_length = int(round(t_width * position / float(duration)))
             filled_length = max(0, min(t_width, filled_length))
             visual_timeline = "█" * filled_length + "░" * (t_width - filled_length)
-            
-            state = "Paused" if self.player.is_paused else "Playing"
-            self.query_one("#player-status", Label).update(
-                f"Status: {state} | Volume: {current_volume}% | {timestamp_str}"
-            )
-            timeline_widget.update(visual_timeline)
         else:
-            timeline_widget.update("░" * t_width)
+            visual_timeline = "░" * t_width
 
-        # 2. FIX: Color-Markup Driven Volume Engine Layout (Eliminates Artifact Gaps)
+        self.query_one("#player-status", Label).update(
+            f"Status: {state} | Volume: {current_volume}% | {timestamp_str}"
+        )
+        timeline_widget.update(visual_timeline)
+
         vol_widget = self.query_one("#volume-bar-display", VolumeBar)
         v_height = vol_widget.size.height if vol_widget.size.height > 0 else 6
         
         vol_percentage = max(0, min(100, current_volume))
-        
-        # Determine exactly how many structural row slots are colored vs uncolored
         filled_lines = int(round((vol_percentage / 100.0) * v_height))
         filled_lines = max(0, min(v_height, filled_lines))
         empty_lines = v_height - filled_lines
         
-        # Stack blocks down from the ceiling to the floor
         vol_lines = []
         for _ in range(empty_lines):
-            vol_lines.append("[#2d2d2d]██[/]") # Premium uniform dark grey unselected slot
+            vol_lines.append("[#2d2d2d]██[/]")
         for _ in range(filled_lines):
-            vol_lines.append("[#00ffcc]██[/]") # Seamless bright neon cyan filled slot
+            vol_lines.append("[#00ffcc]██[/]")
                 
         visual_volume = "\n".join(vol_lines)
         vol_widget.update(visual_volume)
@@ -334,6 +304,7 @@ class YTMusicTUI(App):
         table.clear()
         
         self.row_to_video_id = {}
+        self.row_to_thumbnail = {}
         self.query_one("#content-title", Label).update(f"Tracks ({len(tracks)} loaded)")
 
         for track in tracks:
@@ -347,10 +318,14 @@ class YTMusicTUI(App):
             
             if video_id:
                 self.row_to_video_id[row_key] = video_id
+                thumbnails = track.get('thumbnails', [])
+                if thumbnails:
+                    self.row_to_thumbnail[row_key] = thumbnails[-1].get('url')
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Fires automatically when you select a song row and hit Enter."""
         video_id = getattr(self, "row_to_video_id", {}).get(event.row_key)
+        thumbnail_url = getattr(self, "row_to_thumbnail", {}).get(event.row_key)
         if not video_id:
             self.query_one("#track-info", Label).update("❌ Exact track ID missing.")
             return
@@ -362,21 +337,38 @@ class YTMusicTUI(App):
         self.query_one("#track-info", Label).update(f"⏳ Fetching stream: {title}...")
         self.query_one("#player-status", Label).update("Status: Loading...")
         
-        self.run_worker(self.play_track_worker(video_id, title, artist))
+        self.run_worker(self.play_track_worker(video_id, title, artist, thumbnail_url))
 
-    async def play_track_worker(self, video_id: str, title: str, artist: str) -> None:
+    async def play_track_worker(self, video_id: str, title: str, artist: str, thumbnail_url: str = None) -> None:
         """Bypasses web search entirely and boots up the active audio layer stream."""
         track_url = f"https://music.youtube.com/watch?v={video_id}"
         
         self.query_one("#track-info", Label).update(f"▶ Now Playing: {title} by {artist}")
         self.query_one("#player-status", Label).update(f"Status: Playing | Volume: {self.player.volume}%")
         
+        # FIX: Fire off the MPV audio layer FIRST. It now has 100% network priority.
         self.player.play(track_url, title, artist)
+        
+        # The artwork download now runs non-blocking in the background, updating whenever it arrives!
+        if thumbnail_url:
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(thumbnail_url)
+                    if response.status_code == 200:
+                        pil_img = PILImage.open(BytesIO(response.content))
+                        self.query_one("#album-art", HalfcellImage).image = pil_img
+                        self.query_one("#large-album-art", HalfcellImage).image = pil_img
+            except Exception:
+                pass
 
     def handle_player_event(self, event_name: str) -> None:
         """Thread-safe callback triggered by background MPV events."""
         if event_name == "track_finished":
             self.call_from_thread(self.action_next_track)
+
+    def action_toggle_large_art(self) -> None:
+        """Toggles the dynamic large layout view state class on the application root."""
+        self.toggle_class("large-art-mode")
 
     # ────────────── TIME & AUDIO ADJUSTMENT BUTTONS ──────────────
 
@@ -394,20 +386,23 @@ class YTMusicTUI(App):
 
     def action_seek_forward(self) -> None:
         """Fires when pressing the Right Arrow key."""
-        self.player.seek(10)
-        self.update_progress_bar()
+        if hasattr(self, "player") and self.player.player is not None:
+            self.player.seek(10)
+            self.update_progress_bar()
 
     def action_seek_backward(self) -> None:
         """Fires when pressing the Left Arrow key."""
-        self.player.seek(-10)
-        self.update_progress_bar()
+        if hasattr(self, "player") and self.player.player is not None:
+            self.player.seek(-10)
+            self.update_progress_bar()
 
     def action_toggle_playback(self) -> None:
         """Global action bound to 'Spacebar' key."""
-        is_paused = self.player.toggle_pause()
-        status_label = self.query_one("#player-status", Label)
-        state = "Paused" if is_paused else "Playing"
-        status_label.update(f"Status: {state} | Volume: {self.player.volume}%")
+        if hasattr(self, "player") and self.player.player is not None:
+            is_paused = self.player.toggle_pause()
+            status_label = self.query_one("#player-status", Label)
+            state = "Paused" if is_paused else "Playing"
+            status_label.update(f"Status: {state} | Volume: {self.player.volume}%")
 
     def action_next_track(self) -> None:
         """Placeholder for advancing the playlist queue."""

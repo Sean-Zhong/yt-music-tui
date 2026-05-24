@@ -1,0 +1,127 @@
+Screen {
+    background: #121212;
+}
+
+/* ────────────── MAIN RESPONSIVE VIEWPORTS ────────────── */
+
+#app-body {
+    height: 80%;
+    width: 100%;
+}
+
+#sidebar {
+    width: 15%;
+    min-width: 20;
+    background: #1e1e1e;
+    border-right: solid #333333;
+}
+
+#main-content {
+    width: 85%;
+    padding: 1 2;
+}
+
+#workspace-split {
+    layout: horizontal;
+    width: 100%;
+    height: 1fr;
+}
+
+/* ────────────── ISOLATED TRACKS GRID ────────────── */
+
+#table-container {
+    width: 100%;
+    height: 100%;
+}
+
+#tracks-table {
+    width: 100%;
+    height: 100%;
+}
+
+/* ────────────── BOTTOM CONTROLS DOCK ────────────── */
+
+#player-bar {
+    height: 20%;
+    min-height: 9;
+    background: #1a1a1a;
+    border-top: solid #ff0055;
+    padding: 1 2;
+    layout: horizontal; /* Horizontal split: Vol Fader | Thumbnail | Controls Track */
+}
+
+#album-art {
+    width: 12%;          /* Rigid fixed text grid square ratio */
+    height: 100%;
+    margin-right: 3;
+    border: solid #2d2d2d;
+    background: #121212;
+}
+
+#player-controls-right {
+    width: 1fr;         /* Fluid flex space: fills remaining width dynamically */
+    height: 100%;
+    layout: vertical;   /* Stacks metadata box on top of the timeline track */
+}
+
+#player-controls-text {
+    height: 1fr;        /* Flex push: expands vertically to pin progress bar down */
+    layout: vertical;
+}
+
+#track-info {
+    color: #ffffff;
+    text-style: bold;
+}
+
+#player-status {
+    color: #888888;
+}
+
+#shortcuts-legend {
+    color: #555555;
+    text-style: italic;
+}
+
+PlaybackBar {
+    color: #ff0055;
+    width: 1fr;
+    height: 1;
+}
+
+VolumeBar {
+    margin-right: 1;
+    width: 3%;
+    min-width: 2;
+    height: 100%;
+}
+
+.sidebar-title {
+    padding: 1 2;
+    background: #262626;
+    color: #ff0055;
+    text-style: bold;
+}
+
+#large-album-art {
+    display: none;
+}
+
+/* ────────────── STATE MODIFIERS (MUST LIVE AT THE BOTTOM) ────────────── */
+
+.large-art-mode #table-container {
+    width: 30%;          
+}
+
+.large-art-mode #large-album-art {
+    display: block;
+    width: 70%;
+    height: 100%;         
+    margin-left: 2;
+    border: solid #2d2d2d;
+}
+
+/* Bulletproof layered selector to force-hide the small thumbnail */
+.large-art-mode #player-bar #album-art {
+    display: none;
+}
