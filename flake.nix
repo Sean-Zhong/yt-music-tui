@@ -11,11 +11,13 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        # Package up the local python environment
+        # Package up the local python environment with all required modules
         pythonEnv = pkgs.python3.withPackages (ps: [
           ps.textual
           ps.ytmusicapi
-          # Note: if python-mpv isn't in nixpkgs, nix will build it via pip
+          ps.httpx
+          ps.pillow
+          ps.textual-image
           (ps.toPythonModule pkgs.python3Packages.mpv)
         ]);
       in
@@ -32,6 +34,7 @@
             mkdir -p $out/bin
             cp main.py $out/bin/ytmusic-tui-main
             cp player_manager.py $out/bin/
+            cp style.tcss $out/bin/
             cp browser.json $out/bin/ || true
 
             # Wrap the executable so it can always find the correct python and system libmpv
