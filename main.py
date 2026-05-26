@@ -16,6 +16,7 @@ from textual.binding import Binding
 
 from ytmusicapi import YTMusic
 from player_manager import PlaybackManager
+from pathlib import Path
 
 
 class PlaybackBar(Label):
@@ -106,7 +107,13 @@ class YTMusicTUI(App):
 
     def on_mount(self) -> None:
         """Called when the app starts up and components are mounted."""
-        self.ytmusic = YTMusic("browser.json")
+        config_path = Path.home() / ".config" / "ytmusic-tui" / "browser.json"
+        
+        # Fallback to local file if the global config directory doesn't exist
+        if not config_path.exists():
+            config_path = "browser.json"
+            
+        self.ytmusic = YTMusic(str(config_path))
         self.player = PlaybackManager(ui_callback=self.handle_player_event)
         self.current_row_key = None  # Track the actively playing track coordinate
         
